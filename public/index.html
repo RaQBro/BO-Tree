@@ -1,0 +1,247 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relationship Map</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    #controls {
+      padding: 10px;
+    }
+    #tree-container {
+      flex: 1;
+      width: 100%;
+      border-top: 1px solid #ccc;
+    }
+    .node circle {
+      fill: #999;
+      cursor: pointer;
+    }
+    .node text {
+      font: 12px sans-serif;
+    }
+    .node text.highlighted {
+      font-weight: bold;
+      fill: red;
+    }
+    .link {
+      fill: none;
+      stroke: #555;
+      stroke-width: 2px;
+    }
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 4px 8px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    #filter {
+      margin-top: 10px;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <h1>Upload Excel File</h1>
+    <form id="uploadForm">
+      <input type="file" name="excelFile" accept=".xlsx,.xls" required />
+      <button type="submit">Upload</button>
+    </form>
+    <input type="text" id="filter" placeholder="Filter nodes by name..." />
+  </div>
+
+  <div id="tree-container"></div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const container = document.getElementById('tree-container');
+    const tooltip = document.getElementById('tooltip');
+    const filterInput = document.getElementById('filter');
+    let fullData = [];
+    let lastQuery = '';
+
+    function filterTree(node, query) {
+      if (!node.name) return null;
+      const nameMatch = node.name.toLowerCase().includes(query);
+      let childrenMatch = [];
+
+      if (node.children) {
+        childrenMatch = node.children
+          .map(child => filterTree(child, query))
+          .filter(Boolean);
+      }
+
+      if (nameMatch || childrenMatch.length) {
+        return {
+          ...node,
+          match: nameMatch,
+          children: nameMatch && node.children ? node.children : childrenMatch
+        };
+      }
+      return null;
+    }
+
+    function drawD3Tree(data) {
+      container.innerHTML = '';
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      const dx = 30;
+      const dy = width / 6;
+      let i = 0;
+
+      const tree = d3.tree().nodeSize([dx, dy]);
+      const diagonal = d3.linkHorizontal().x(d => d.y).y(d => d.x);
+
+      const virtualRoot = { name: 'Root', children: data };
+      const root = d3.hierarchy(virtualRoot);
+
+      root.x0 = height / 2;
+      root.y0 = 0;
+
+      const svg = d3.select(container).append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const g = svg.append("g")
+        .attr("transform", `translate(80,${dx})`);
+
+      svg.call(d3.zoom().on("zoom", function (event) {
+        g.attr("transform", event.transform);
+      }));
+
+      function update(source) {
+        tree(root);
+
+        const nodes = root.descendants();
+        const links = root.links();
+
+        const node = g.selectAll(".node")
+          .data(nodes, d => d.id || (d.id = ++i));
+
+        const nodeEnter = node.enter().append("g")
+          .attr("class", "node")
+          .attr("transform", d => `translate(${source.y0},${source.x0})`)
+          .on("click", (event, d) => {
+            if (d.children) {
+              d._children = d.children;
+              d.children = null;
+            } else {
+              d.children = d._children;
+              d._children = null;
+            }
+            update(d);
+          })
+          .on("mouseover", (event, d) => {
+            tooltip.style.opacity = 1;
+            tooltip.textContent = d.data.id;
+          })
+          .on("mousemove", event => {
+            tooltip.style.left = event.pageX + 10 + 'px';
+            tooltip.style.top = event.pageY + 'px';
+          })
+          .on("mouseout", () => tooltip.style.opacity = 0);
+
+        nodeEnter.append("circle")
+          .attr("r", 1e-6)
+          .attr("fill", d => d._children ? "#555" : "#999");
+
+        nodeEnter.append("text")
+          .attr("dy", "-0.6em")
+          .attr("x", d => d._children ? -10 : 10)
+          .attr("text-anchor", d => d._children ? "end" : "start")
+          .attr("class", d => (lastQuery && d.data.match) ? 'highlighted' : null)
+          .text(d => d.data.name || '');
+
+        const nodeUpdate = nodeEnter.merge(node);
+
+        nodeUpdate.transition().duration(300)
+          .attr("transform", d => `translate(${d.y},${d.x})`);
+
+        nodeUpdate.select("circle")
+          .attr("r", 5);
+
+        node.exit().transition().duration(300)
+          .attr("transform", d => `translate(${source.y},${source.x})`)
+          .remove();
+
+        const link = g.selectAll(".link")
+  .data(links, d => d.target.id);
+
+const linkEnter = link.enter().append("path")
+  .attr("class", "link")
+  .attr("d", d => {
+    const o = { x: source.x0, y: source.y0 };
+    return diagonal({ source: o, target: o });
+  })
+  .on("mouseover", (event, d) => {
+    tooltip.style.opacity = 1;
+    tooltip.textContent = `Link: ${d.source.data.name} → ${d.target.data.name}`;
+  })
+  .on("mousemove", event => {
+    tooltip.style.left = event.pageX + 10 + 'px';
+    tooltip.style.top = event.pageY + 'px';
+  })
+  .on("mouseout", () => tooltip.style.opacity = 0);
+
+linkEnter.merge(link)
+  .transition().duration(300)
+  .attr("d", diagonal);
+
+link.exit().transition().duration(300)
+  .attr("d", d => {
+    const o = { x: source.x, y: source.y };
+    return diagonal({ source: o, target: o });
+  })
+  .remove();
+
+        nodes.forEach(d => {
+          d.x0 = d.x;
+          d.y0 = d.y;
+        });
+      }
+
+      update(root);
+    }
+
+    filterInput.addEventListener('input', () => {
+      const query = filterInput.value.trim().toLowerCase();
+      lastQuery = query;
+      if (!query) {
+        drawD3Tree(fullData);
+      } else {
+        const filtered = fullData.map(node => filterTree(node, query)).filter(Boolean);
+        drawD3Tree(filtered);
+      }
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+
+      const res = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      fullData = data;
+      drawD3Tree(data);
+    });
+  </script>
+</body>
+</html>
